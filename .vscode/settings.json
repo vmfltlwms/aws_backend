@@ -1,0 +1,7 @@
+{
+  "terminal.integrated.env.linux": {
+    "PYTHONPATH": "${workspaceFolder}"
+  },
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "python.pythonPath": "${workspaceFolder}/../kim_aws_env/bin/python"
+}
