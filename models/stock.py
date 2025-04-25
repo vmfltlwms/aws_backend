@@ -5,15 +5,15 @@ from typing import List, Optional, Union
 class RealtimePriceRequest(BaseModel):
     group_no: str = "1"
     items: List[str]
-    data_types: List[str] = ["0D"]
+    data_types: List[str] = []
     refresh: bool = True
     
     class Config:
         schema_extra = {
             "example": {
                 "group_no": "1",
-                "items": ["005930", "000660"],
-                "data_types": ["0D"],
+                "items": [],
+                "data_types": [],
                 "refresh": True
             }
         }
@@ -26,8 +26,8 @@ class RealtimePriceUnsubscribeRequest(BaseModel):
         schema_extra = {
             "example": {
                 "group_no": "1",
-                "items": ["005930", "000660"],
-                "data_types": ["0D"]
+                "items": [],
+                "data_types": []
             }
         }
         
@@ -48,7 +48,7 @@ class ConditionalSearchRequest(BaseModel):
     class Config:
         schema_extra = {
             "example": {
-                "seq": "4",
+                "seq": "",
                 "search_type": "0",
                 "market_type": "K",
                 "cont_yn": "N",

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from core.kiwoom_client import KiwoomClient
 from models.stock import StockInfo
 from dependencies import get_kiwoom_client, get_connection_manager
+from utils.transformers import transform_numeric_data
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -12,6 +13,8 @@ logger = logging.getLogger(__name__)
 @router.get("/stocks/{code}", response_model=StockInfo,
             summary="계좌 기본 정보 조회",
             description="현재 로그인된 사용자의 계좌 기본 정보를 반환합니다.")
+
+
 async def get_stock_info(code: str, kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)):
     """주식 기본 정보 조회"""
     try:
@@ -82,6 +85,7 @@ async def get_tick_chart(
             cont_yn=cont_yn,
             next_key=next_key
         )
+        response = transform_numeric_data(response)
         
         return response
     except Exception as e:
@@ -110,8 +114,10 @@ async def get_minute_chart(
             cont_yn=cont_yn,
             next_key=next_key
         )
-        
+        response = transform_numeric_data(response)
+
         return response
+        
     except Exception as e:
         logger.error(f"분봉차트 조회 엔드포인트 오류: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -138,7 +144,7 @@ async def get_daily_chart(
             cont_yn=cont_yn,
             next_key=next_key
         )
-        
+        response = transform_numeric_data(response)
         return response
     except Exception as e:
         logger.error(f"일봉차트 조회 엔드포인트 오류: {str(e)}")
@@ -166,7 +172,7 @@ async def get_weekly_chart(
             cont_yn=cont_yn,
             next_key=next_key
         )
-        
+        response = transform_numeric_data(response)
         return response
     except Exception as e:
         logger.error(f"주봉차트 조회 엔드포인트 오류: {str(e)}")
@@ -194,7 +200,8 @@ async def get_monthly_chart(
             cont_yn=cont_yn,
             next_key=next_key
         )
-        
+        response = transform_numeric_data(response)
+
         return response
     except Exception as e:
         logger.error(f"월봉차트 조회 엔드포인트 오류: {str(e)}")
@@ -222,7 +229,7 @@ async def get_yearly_chart(
             cont_yn=cont_yn,
             next_key=next_key
         )
-        
+        response = transform_numeric_data(response)
         return response
     except Exception as e:
         logger.error(f"년봉차트 조회 엔드포인트 오류: {str(e)}")
@@ -255,7 +262,6 @@ async def get_theme_group(
             cont_yn=cont_yn,
             next_key=next_key
         )
-        
         return response
     except Exception as e:
         logger.error(f"테마그룹 조회 엔드포인트 오류: {str(e)}")
@@ -282,7 +288,6 @@ async def get_theme_components_endpoint(
             cont_yn=cont_yn,
             next_key=next_key
         )
-
         return response
     except Exception as e:
         logger.error(f"테마구성종목 조회 엔드포인트 오류: {str(e)}")
@@ -333,7 +338,6 @@ async def get_all_sector_index_endpoint(
             cont_yn=cont_yn,
             next_key=next_key
         )
-
         return response
     except Exception as e:
         logger.error(f"전업종지수 조회 엔드포인트 오류: {str(e)}")

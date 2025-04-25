@@ -1,5 +1,6 @@
 from fastapi import Depends
-
+from db.postgres import get_db_connection
+from db.redis_client import get_redis_connection
 from core.kiwoom_client import KiwoomClient
 from core.websocket import ConnectionManager
 
@@ -20,3 +21,11 @@ def get_connection_manager() -> ConnectionManager:
     if _connection_manager is None:
         _connection_manager = ConnectionManager()
     return _connection_manager
+
+def get_db():
+    """PostgreSQL 데이터베이스 연결을 반환합니다."""
+    return get_db_connection()
+
+def get_redis():
+    """Redis 연결을 반환합니다."""
+    return get_redis_connection()

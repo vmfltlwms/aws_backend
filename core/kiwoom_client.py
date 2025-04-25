@@ -7,7 +7,6 @@ from datetime import datetime
 import requests
 import websockets
 from fastapi import WebSocket
-from .market import get_monthly_chart, get_yearly_chart
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -960,6 +959,7 @@ class KiwoomClient() :
             
             # 응답 데이터
             result = response.json()
+            
             
             # 연속조회 여부 및 다음 키 처리
             headers_dict = dict(response.headers)

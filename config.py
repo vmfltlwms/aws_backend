@@ -20,6 +20,20 @@ class Settings(BaseSettings):
     # CORS 설정
     CORS_ORIGINS: list = ["http://localhost:3000"]
     
+        # PostgreSQL 설정 추가
+    PG_USER: str = "myuser"
+    PG_PASSWORD: str = "mypassword"
+    PG_HOST: str = "localhost"
+    PG_PORT: str = "5432"
+    PG_DATABASE: str = "trading_db"
+    
+    # Redis 설정 추가
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    REDIS_DB: int = 0
+
+    
     class Config:
         env_file = ".env"
 
