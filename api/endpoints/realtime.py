@@ -3,66 +3,21 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from core.kiwoom_client import KiwoomClient
 from core.websocket import ConnectionManager
-from models.stock import GroupRegistration,ConditionalSearch,\
-                        ConditionalSearchRequest,RealtimePriceRequest,RealtimePriceUnsubscribeRequest
-from dependencies import get_kiwoom_client, get_connection_manager
+from services.realtime_services import RealtimeStateManager
+from models.stock import ConditionalSearch, ConditionalSearchRequest, \
+                        RealtimePriceRequest, RealtimePriceUnsubscribeRequest
+from dependencies import get_kiwoom_client, get_connection_manager, get_realtime_state_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-
-
-@router.post("/realtime/price/unsubscribe")
-async def unsubscribe_realtime_price(
-    request: RealtimePriceUnsubscribeRequest,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
-):
-    """
-    실시간 시세 정보 구독 해제 API
-    
-    - **group_no**: 그룹 번호
-    - **items**: 종목 코드 리스트 (예: ["005930", "000660"]). None이면 그룹 전체 해제
-    - **data_types**: 데이터 타입 리스트 (예: ["0D"]). None이면 지정된 종목의 모든 타입 해제
-    """
-    if not kiwoom_client.connected:
-        raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
-    
-    result = await kiwoom_client.unsubscribe_realtime_price(
-        group_no=request.group_no,
-        items=request.items,
-        data_types=request.data_types
-    )
-    
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    
-    return result
-
-# 그룹 전체 해제를 위한 간단한 엔드포인트
-@router.delete("/realtime/price/group/{group_no}")
-async def unsubscribe_group(
-    group_no: str,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
-):
-    """
-    실시간 시세 그룹 전체 구독 해제 API
-    
-    - **group_no**: 해제할 그룹 번호
-    """
-    if not kiwoom_client.connected:
-        raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
-    
-    result = await kiwoom_client.unsubscribe_realtime_price(group_no=group_no)
-    
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    
-    return result
-
-@router.post("/realtime/price/subscribe")
+@router.post("/price/subscribe",
+            summary="실시간 구독 등록",
+            description="실시간 구독 등록")
 async def subscribe_realtime_price(
     request: RealtimePriceRequest,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
+    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """
     실시간 시세 정보 구독 API
@@ -84,6 +39,77 @@ async def subscribe_realtime_price(
     
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    
+    # 상태 관리자 업데이트
+    state_manager.add_subscription(
+        group_no=request.group_no,
+        items=request.items,
+        data_types=request.data_types,
+        refresh=request.refresh
+    )
+    
+    return result
+
+
+@router.post("/price/unsubscribe",
+            summary="실시간 구독 등록해제",
+            description="실시간 구독 등록해제")
+async def unsubscribe_realtime_price(
+    request: RealtimePriceUnsubscribeRequest,
+    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
+):
+    """
+    실시간 시세 정보 구독 해제 API
+    
+    - **group_no**: 그룹 번호
+    - **items**: 종목 코드 리스트 (예: ["005930", "000660"]). None이면 그룹 전체 해제
+    - **data_types**: 데이터 타입 리스트 (예: ["0D"]). None이면 지정된 종목의 모든 타입 해제
+    """
+    if not kiwoom_client.connected:
+        raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
+    
+    result = await kiwoom_client.unsubscribe_realtime_price(
+        group_no=request.group_no,
+        items=request.items,
+        data_types=request.data_types
+    )
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    # 상태 관리자 업데이트
+    state_manager.remove_subscription(
+        group_no=request.group_no,
+        items=request.items,
+        data_types=request.data_types
+    )
+    
+    return result
+
+
+# 그룹 전체 해제를 위한 간단한 엔드포인트
+@router.delete("/price/group/{group_no}")
+async def unsubscribe_group(
+    group_no: str,
+    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
+):
+    """
+    실시간 시세 그룹 전체 구독 해제 API
+    
+    - **group_no**: 해제할 그룹 번호
+    """
+    if not kiwoom_client.connected:
+        raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
+    
+    result = await kiwoom_client.unsubscribe_realtime_price(group_no=group_no)
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    # 상태 관리자 업데이트
+    state_manager.remove_subscription(group_no=group_no)
     
     return result
 
@@ -131,7 +157,8 @@ async def request_condition_search(
 @router.post("/condition/realtime")
 async def request_realtime_condition(
     condition_search: ConditionalSearch,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
+    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """조건검색 요청 실시간 (ka10173)"""
     try:
@@ -144,6 +171,9 @@ async def request_realtime_condition(
             condition_search.market_type
         )
         
+        # 상태 관리자 업데이트
+        state_manager.add_condition_subscription(condition_search.seq)
+        
         return {"status": "success", "message": "실시간 조건검색 요청 완료", "data": result}
     except Exception as e:
         logger.error(f"실시간 조건검색 요청 오류: {str(e)}")
@@ -153,7 +183,8 @@ async def request_realtime_condition(
 @router.post("/condition/cancel")
 async def cancel_realtime_condition(
     seq: str = Query(..., description="조건검색식 일련번호"),
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
+    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """조건검색 실시간 해제 (ka10174)"""
     try:
@@ -162,39 +193,21 @@ async def cancel_realtime_condition(
         
         result = await kiwoom_client.cancel_realtime_condition(seq)
         
+        # 상태 관리자 업데이트
+        state_manager.remove_condition_subscription(seq)
+        
         return {"status": "success", "message": f"실시간 조건검색 해제 완료 (조건번호: {seq})"}
     except Exception as e:
         logger.error(f"실시간 조건검색 해제 오류: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
-    
-@router.post("/realtime/register")
-async def register_realtime_data(
-    data: GroupRegistration,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
-):
-    """그룹에 실시간 데이터 등록"""
-    if not kiwoom_client.connected:
-        raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
-    
-    result = await kiwoom_client.register_real_data(
-        data.group_no,
-        data.registration.items,
-        data.registration.types,
-        data.registration.refresh
-    )
-    
-    if result:
-        return {"status": "success", "message": "실시간 데이터 등록 완료"}
-    else:
-        raise HTTPException(status_code=500, detail="실시간 데이터 등록 실패")
-
 
 @router.websocket("/ws/market")
 async def market_websocket(
     websocket: WebSocket,
     connection_manager: ConnectionManager = Depends(get_connection_manager),
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
+    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """시장 데이터 웹소켓 연결"""
     connection_info = await connection_manager.connect(websocket)
@@ -221,6 +234,10 @@ async def market_websocket(
                         if result:
                             if group_no not in connection_info["groups"]:
                                 connection_info["groups"].append(group_no)
+                            
+                            # 상태 관리자 업데이트
+                            state_manager.add_subscription(group_no, items, types, refresh)
+                            
                             await websocket.send_json({"status": "success", "action": "register"})
                         else:
                             await websocket.send_json({"status": "error", "message": "등록 실패"})
@@ -269,6 +286,10 @@ async def market_websocket(
                             condition_group = f"cond_{seq}"
                             if condition_group not in connection_info["groups"]:
                                 connection_info["groups"].append(condition_group)
+                                
+                            # 상태 관리자 업데이트
+                            state_manager.add_condition_subscription(seq)
+                            
                             await websocket.send_json({"status": "success", "action": "condition_realtime", "data": result})
                         except Exception as e:
                             await websocket.send_json({"status": "error", "message": f"실시간 조건검색 요청 실패: {str(e)}"})
@@ -286,6 +307,10 @@ async def market_websocket(
                             condition_group = f"cond_{seq}"
                             if condition_group in connection_info["groups"]:
                                 connection_info["groups"].remove(condition_group)
+                                
+                            # 상태 관리자 업데이트
+                            state_manager.remove_condition_subscription(seq)
+                            
                             await websocket.send_json({"status": "success", "action": "condition_cancel"})
                         except Exception as e:
                             await websocket.send_json({"status": "error", "message": f"실시간 조건검색 해제 실패: {str(e)}"})
@@ -322,6 +347,9 @@ async def market_websocket(
                                 # 구독 성공 시 그룹에 추가
                                 if group_no not in connection_info["groups"]:
                                     connection_info["groups"].append(group_no)
+                                
+                                # 상태 관리자 업데이트
+                                state_manager.add_subscription(group_no, items, data_types, refresh)
                                 
                                 await websocket.send_json({
                                     "status": "success", 
@@ -360,6 +388,9 @@ async def market_websocket(
                             # 구독 해제 성공 시 해당 그룹 연결 정보에서 제거 (그룹 전체 해제인 경우)
                             if items is None and group_no in connection_info["groups"]:
                                 connection_info["groups"].remove(group_no)
+                            
+                            # 상태 관리자 업데이트
+                            state_manager.remove_subscription(group_no, items, data_types)
                             
                             await websocket.send_json({
                                 "status": "success", 
@@ -425,7 +456,7 @@ async def market_websocket(
                         try:
                             result = await kiwoom_client.get_minute_chart(
                                 code=code,
-                                minute_unit=minute_unit,
+                                tic_scope=minute_unit,
                                 price_type=price_type,
                                 cont_yn=cont_yn,
                                 next_key=next_key
@@ -446,7 +477,7 @@ async def market_websocket(
                 elif command.get("action") == "get_daily_chart":
                     # 일봉차트 데이터 요청 처리
                     code = command.get("code")
-                    period_value = command.get("period_value", "1")
+                    base_dt = command.get("base_dt", "")
                     price_type = command.get("price_type", "1")
                     cont_yn = command.get("cont_yn", "N")
                     next_key = command.get("next_key", "")
@@ -460,7 +491,7 @@ async def market_websocket(
                         try:
                             result = await kiwoom_client.get_daily_chart(
                                 code=code,
-                                period_value=period_value,
+                                base_dt=base_dt,
                                 price_type=price_type,
                                 cont_yn=cont_yn,
                                 next_key=next_key
@@ -481,6 +512,7 @@ async def market_websocket(
                 elif command.get("action") == "get_weekly_chart":
                     # 주봉차트 데이터 요청 처리
                     code = command.get("code")
+                    base_dt = command.get("base_dt", "")
                     price_type = command.get("price_type", "1")
                     cont_yn = command.get("cont_yn", "N")
                     next_key = command.get("next_key", "")
@@ -494,6 +526,7 @@ async def market_websocket(
                         try:
                             result = await kiwoom_client.get_weekly_chart(
                                 code=code,
+                                base_dt=base_dt,
                                 price_type=price_type,
                                 cont_yn=cont_yn,
                                 next_key=next_key
@@ -514,6 +547,7 @@ async def market_websocket(
                 elif command.get("action") == "get_monthly_chart":
                     # 월봉차트 데이터 요청 처리
                     code = command.get("code")
+                    base_dt = command.get("base_dt", "")
                     price_type = command.get("price_type", "1")
                     cont_yn = command.get("cont_yn", "N")
                     next_key = command.get("next_key", "")
@@ -527,6 +561,7 @@ async def market_websocket(
                         try:
                             result = await kiwoom_client.get_monthly_chart(
                                 code=code,
+                                base_dt=base_dt,
                                 price_type=price_type,
                                 cont_yn=cont_yn,
                                 next_key=next_key
@@ -547,6 +582,7 @@ async def market_websocket(
                 elif command.get("action") == "get_yearly_chart":
                     # 년봉차트 데이터 요청 처리
                     code = command.get("code")
+                    base_dt = command.get("base_dt", "")
                     price_type = command.get("price_type", "1")
                     cont_yn = command.get("cont_yn", "N")
                     next_key = command.get("next_key", "")
@@ -560,6 +596,7 @@ async def market_websocket(
                         try:
                             result = await kiwoom_client.get_yearly_chart(
                                 code=code,
+                                base_dt=base_dt,
                                 price_type=price_type,
                                 cont_yn=cont_yn,
                                 next_key=next_key
@@ -577,8 +614,38 @@ async def market_websocket(
                                 "message": f"년봉차트 요청 처리 오류: {str(e)}"
                             })
 
-                # 다른 명령 처리
-                # ...
+                # 상태 조회 명령
+                elif command.get("action") == "get_status":
+                    # 현재 구독 상태 조회
+                    try:
+                        subscriptions = state_manager.get_all_subscriptions()
+                        condition_subscriptions = state_manager.get_condition_subscriptions()
+                        
+                        await websocket.send_json({
+                            "status": "success",
+                            "action": "get_status",
+                            "data": {
+                                "subscriptions": subscriptions,
+                                "condition_subscriptions": condition_subscriptions,
+                                "connection_info": {
+                                    "client_id": connection_info["client_id"],
+                                    "groups": connection_info["groups"]
+                                }
+                            }
+                        })
+                    except Exception as e:
+                        logger.error(f"상태 조회 처리 오류: {str(e)}")
+                        await websocket.send_json({
+                            "status": "error",
+                            "message": f"상태 조회 처리 오류: {str(e)}"
+                        })
+                
+                # 기타 명령에 대한 오류 응답
+                else:
+                    await websocket.send_json({
+                        "status": "error",
+                        "message": f"지원하지 않는 명령: {command.get('action')}"
+                    })
                 
             except json.JSONDecodeError:
                 await websocket.send_json({"status": "error", "message": "유효하지 않은 JSON 형식"})
@@ -588,3 +655,10 @@ async def market_websocket(
                 
     except WebSocketDisconnect:
         connection_manager.disconnect(websocket)
+        logger.info(f"클라이언트 연결 종료: {connection_info['client_id']}")
+    except Exception as e:
+        logger.error(f"웹소켓 통신 중 예외 발생: {str(e)}")
+        try:
+            connection_manager.disconnect(websocket)
+        except:
+            pass

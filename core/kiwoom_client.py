@@ -652,7 +652,16 @@ class KiwoomClient() :
                     'type': data_types              # 데이터 타입 리스트
                 }]
             }
-            
+            # 상태 추적 딕셔너리 업데이트
+            if not refresh:  # refresh=False(0)이면 초기화
+                self.registered_items[str(group_no)] = {}
+            else:  # refresh=True(1)이면 기존 유지
+                if str(group_no) not in self.registered_items:
+                    self.registered_items[str(group_no)] = {}
+            #debug
+            print("debug purpose")
+            print(self.registered_items)
+
             # 요청 전송
             logger.info(f"실시간 시세 구독 요청: 그룹={group_no}, 종목={items}, 타입={data_types}")
             result = await self.send_message(request_data)
@@ -742,7 +751,14 @@ class KiwoomClient() :
                 
             # 기타 데이터 타입 처리
             # ...
+                    # Redis에 데이터 저장
+            from db.redis_client import store_realtime_market_data, get_redis_connection
+            redis_client = get_redis_connection()
+            store_realtime_market_data(redis_client, data)
             
+            # 클라이언트에 데이터 전송
+            await self.broadcast_to_clients(data)
+
         except Exception as e:
             logger.error(f"실시간 데이터 처리 중 오류: {str(e)}")
 
@@ -751,9 +767,9 @@ class KiwoomClient() :
         실시간 시세 정보 구독 해제 함수
         
         Args:
-            group_no (str): 그룹 번호
+            group_no (str): 그룹 번호 (필수)
             items (list): 종목 코드 리스트 (예: ["005930", "000660"]). None이면 그룹 전체 해제
-            data_types (list): 데이터 타입 리스트 (예: ["0D", "01"]). None이면 지정된 종목의, 종목 자체가 None이면, 모든 타입 해제
+            data_types (list): 데이터 타입 리스트 (예: ["0D", "01"]). None이면 지정된 종목의 모든 타입 해제
         
         Returns:
             dict: 요청 결과
@@ -766,12 +782,20 @@ class KiwoomClient() :
             # 그룹 번호 문자열 변환
             group_no = str(group_no)
             
-            # items가 None이면 그룹 전체 해제
-            if items is None:
+            # 그룹이 등록되어 있는지 확인
+            if group_no not in self.registered_items:
+                logger.warning(f"그룹 {group_no}에 등록된 데이터가 없습니다.")
+                return {
+                    "status": "warning", 
+                    "message": f"그룹 {group_no}에 등록된 데이터가 없습니다."
+                }
+            
+            # items, data_types이 None이면 그룹 전체 삭제
+            if items is None and data_types is None:
                 # 요청 데이터 구성
                 request_data = {
-                    'trnm': 'REMOVE',                # 등록 해제 명령
-                    'grp_no': group_no              # 그룹 번호
+                    'trnm': 'REMOVE',             # 등록 해제 명령
+                    'grp_no': group_no            # 그룹 번호
                 }
                 
                 # 요청 전송
@@ -779,10 +803,8 @@ class KiwoomClient() :
                 result = await self.send_message(request_data)
                 
                 # 상태 추적 딕셔너리 업데이트
-                if group_no in self.registered_items:
-                    del self.registered_items[group_no]
-                
                 if result:
+                    del self.registered_items[group_no]
                     return {
                         "status": "success", 
                         "message": f"그룹 {group_no} 실시간 시세 구독 해제 완료 (전체)",
@@ -791,25 +813,51 @@ class KiwoomClient() :
                 else:
                     return {"error": "실시간 시세 구독 해제 요청 실패"}
             
-            # 특정 종목과 타입만 해제
+            # 특정 종목과 타입 해제
             else:
-                # data_types가 None이면 모든 타입 해제
-                if data_types is None and group_no in self.registered_items:
-                    # 해당 종목에 등록된 모든 타입 가져오기
-                    data_types = []
+                # items가 제공되었는지 확인
+                if not items:
+                    return {"error": "종목 코드가 제공되지 않았습니다."}
+                
+                # 종목이 등록되어 있는지 확인
+                invalid_items = [item for item in items if item not in self.registered_items[group_no]]
+                if invalid_items:
+                    logger.warning(f"그룹 {group_no}에 등록되지 않은 종목: {invalid_items}")
+                    return {
+                        "status": "warning", 
+                        "message": f"그룹 {group_no}에 등록되지 않은 종목이 있습니다: {invalid_items}"
+                    }
+                
+                # data_types가 None이면 해당 종목의 모든 타입 가져오기
+                if data_types is None:
+                    data_types_by_item = {}
+                    all_data_types = set()
+                    
                     for item in items:
                         if item in self.registered_items[group_no]:
-                            data_types.extend(self.registered_items[group_no][item])
-                    # 중복 제거
-                    data_types = list(set(data_types))
+                            data_types_by_item[item] = self.registered_items[group_no][item].copy()
+                            all_data_types.update(data_types_by_item[item])
+                    
+                    # 모든 종목에 대해 모든 타입 해제
+                    data_types = list(all_data_types)
+                else:
+                    # 타입이 등록되어 있는지 확인
+                    for item in items:
+                        invalid_types = [t for t in data_types if t not in self.registered_items[group_no][item]]
+                        if invalid_types:
+                            logger.warning(f"종목 {item}에 등록되지 않은 타입: {invalid_types}")
+                            return {
+                                "status": "warning", 
+                                "message": f"종목 {item}에 등록되지 않은 타입이 있습니다: {invalid_types}"
+                            }
                 
                 # 요청 데이터 구성
                 request_data = {
-                    'trnm': 'UNREG',                # 등록 해제 명령
-                    'grp_no': group_no,             # 그룹 번호
+                    'trnm': 'REMOVE',           # 등록 해제 명령
+                    'grp_no': group_no,         # 그룹 번호
                     'data': [{
-                        'item': items,              # 종목 코드 리스트
-                        'type': data_types          # 데이터 타입 리스트
+                        'item': items,          # 종목 코드 리스트
+                        'type': data_types      # 데이터 타입 리스트
                     }]
                 }
                 
@@ -818,7 +866,7 @@ class KiwoomClient() :
                 result = await self.send_message(request_data)
                 
                 # 상태 추적 딕셔너리 업데이트
-                if group_no in self.registered_items:
+                if result:
                     for item in items:
                         if item in self.registered_items[group_no]:
                             for type_code in data_types:
@@ -832,8 +880,7 @@ class KiwoomClient() :
                     # 그룹에 등록된 종목이 없으면 그룹 자체를 삭제
                     if not self.registered_items[group_no]:
                         del self.registered_items[group_no]
-                
-                if result:
+                    
                     return {
                         "status": "success", 
                         "message": "실시간 시세 구독 해제 완료",

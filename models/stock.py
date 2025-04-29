@@ -5,8 +5,8 @@ from typing import List, Optional, Union
 class RealtimePriceRequest(BaseModel):
     group_no: str = "1"
     items: List[str]
-    data_types: List[str] = []
-    refresh: bool = True
+    data_types: List[str]
+    refresh: bool = True # True(1): 기존 등록 유지, False(0): 기존 등록 초기화
     
     class Config:
         schema_extra = {
