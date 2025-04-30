@@ -46,7 +46,8 @@ async def create_tables():
             price DECIMAL(10, 2) NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
+        """
+        ,
         """
         CREATE TABLE IF NOT EXISTS transactions (
             id SERIAL PRIMARY KEY,
@@ -57,7 +58,49 @@ async def create_tables():
             transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
-    ]
+        ,
+        """
+            CREATE TABLE IF NOT EXISTS stock_trade_intensity (
+                id SERIAL PRIMARY KEY,
+                stock_code VARCHAR(10) NOT NULL,
+                trade_date DATE NOT NULL,
+                trade_time TIME NOT NULL,
+                intensity_1min DECIMAL(10, 2) NOT NULL,
+                intensity_5min DECIMAL(10, 2) NOT NULL,
+                buy_volume_1min INTEGER NOT NULL,
+                sell_volume_1min INTEGER NOT NULL,
+                buy_volume_5min INTEGER NOT NULL,
+                sell_volume_5min INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP,
+                UNIQUE (stock_code, trade_date, trade_time)
+            );
+        """
+        ,
+        """
+            CREATE TABLE IF NOT EXISTS stock_trade_signals (
+                id SERIAL PRIMARY KEY,
+                stock_code VARCHAR(10) NOT NULL,
+                signal_date DATE NOT NULL,
+                signal_time TIME NOT NULL,
+                signal_type VARCHAR(10) NOT NULL,
+                signal_strength DECIMAL(10, 2) NOT NULL,
+                intensity_1min DECIMAL(10, 2) NOT NULL,
+                intensity_5min DECIMAL(10, 2) NOT NULL,
+                change_1min DECIMAL(10, 2) NOT NULL,
+                change_5min DECIMAL(10, 2) NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """
+        ,
+        """
+            CREATE INDEX IF NOT EXISTS idx_trade_intensity_stock_date ON stock_trade_intensity (stock_code, trade_date);
+        """
+        ,
+        """
+            CREATE INDEX IF NOT EXISTS idx_trade_signals_stock_date ON stock_trade_signals (stock_code, signal_date);
+        """
+        ]
     
     try:
         with conn.cursor() as cur:

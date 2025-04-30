@@ -53,7 +53,7 @@ def get_cached_stock_data(symbol):
     data = client.get(f"stock:{symbol}")
     return data.decode('utf-8') if data else None
 
-def save_data(key, data, expire_seconds=None):
+def save_data(key, data, expire_seconds=300):
     """Redis에 데이터 저장"""
     client = get_redis_connection()
     

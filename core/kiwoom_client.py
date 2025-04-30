@@ -1355,8 +1355,7 @@ class KiwoomClient() :
             except:
                 pass
             raise
-        
-        
+
     async def get_order_detail(self, 
                                 order_date: str,
                                 query_type: str = "1", 
@@ -1660,7 +1659,6 @@ class KiwoomClient() :
                 pass
             raise
         
-    
     async def get_daily_item_realized_profit(self, 
                                         stk_cd: str, 
                                         strt_dt: str,
