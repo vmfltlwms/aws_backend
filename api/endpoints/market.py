@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from core.kiwoom_client import KiwoomClient
 from models.stock import StockInfo
-from dependencies import get_kiwoom_client, get_connection_manager
+from dependencies import get_kiwoom_client
 from utils.transformers import transform_numeric_data
 
 router = APIRouter()

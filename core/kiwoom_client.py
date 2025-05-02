@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Dict, List, Optional, Any, Union
+from typing import List
 from datetime import datetime
 import requests
 import websockets
@@ -227,7 +227,7 @@ class KiwoomClient() :
                     logger.debug('PING 메시지 수신, PONG 응답')
                     await self.send_message(response)
                     
-                elif trnm == 'RECV':
+                elif trnm == 'REG':
                     # 실시간 데이터 수신 처리
                     await self.handle_realtime_data(response)
                     await self.broadcast_to_clients(response)  # 기존 코드
@@ -239,7 +239,7 @@ class KiwoomClient() :
                 
                 # PING이 아닌 모든 메시지 로깅
                 if trnm != 'PING':
-                    logger.info(f'실시간 시세 서버 응답 수신: {response}')
+                    logger.info(f'실시간 시세 서버 응답 수신 @@@: {response}')
 
             except websockets.ConnectionClosed:
                 logger.warning('키움 서버에서 연결이 종료되었습니다.')
