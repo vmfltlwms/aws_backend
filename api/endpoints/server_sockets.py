@@ -11,6 +11,16 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.websocket("/test")
+async def test_websocket(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        try:
+            data = await websocket.receive_text()
+            await websocket.send_text(f"You sent: {data}")
+        except WebSocketDisconnect:
+            break
+
 @router.websocket("/ws/market")
 async def market_websocket(
     websocket: WebSocket,

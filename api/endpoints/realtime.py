@@ -1,11 +1,11 @@
 import logging
 import json
 from fastapi import APIRouter, Depends, HTTPException,Query
-from core.kiwoom_client import KiwoomClient
+from core.socket_client import SocketClient
 from services.realtime_services import RealtimeStateManager
 from models.stock import ConditionalSearch, ConditionalSearchRequest, \
                         RealtimePriceRequest, RealtimePriceUnsubscribeRequest
-from dependencies import get_kiwoom_client, get_realtime_state_manager
+from dependencies import get_socket_client, get_realtime_state_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
             description="실시간 구독 등록")
 async def subscribe_realtime_price(
     request: RealtimePriceRequest,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    socket_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """
@@ -26,10 +26,10 @@ async def subscribe_realtime_price(
     - **data_types**: 데이터 타입 리스트 (예: ["0D"])
     - **refresh**: 새로고침 여부 (True: 기존 등록 초기화, False: 기존에 추가)
     """
-    if not kiwoom_client.connected:
+    if not socket_client.connected:
         raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
     
-    result = await kiwoom_client.subscribe_realtime_price(
+    result = await socket_client.subscribe_realtime_price(
         group_no=request.group_no,
         items=request.items,
         data_types=request.data_types,
@@ -55,7 +55,7 @@ async def subscribe_realtime_price(
             description="실시간 구독 등록해제")
 async def unsubscribe_realtime_price(
     request: RealtimePriceUnsubscribeRequest,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    kiwoom_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """
@@ -91,7 +91,7 @@ async def unsubscribe_realtime_price(
 @router.delete("/price/group/{group_no}")
 async def unsubscribe_group(
     group_no: str,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    kiwoom_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """
@@ -114,7 +114,7 @@ async def unsubscribe_group(
 
 
 @router.get("/condition/list")
-async def get_condition_list(kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)):
+async def get_condition_list(kiwoom_client: SocketClient = Depends(get_socket_client)):
     """조건검색 목록 조회 (ka10171)"""
     try:
         if not kiwoom_client.connected:
@@ -132,7 +132,7 @@ async def get_condition_list(kiwoom_client: KiwoomClient = Depends(get_kiwoom_cl
 @router.post("/condition/search")
 async def request_condition_search(
     condition_search: ConditionalSearchRequest,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client)
+    kiwoom_client: SocketClient = Depends(get_socket_client)
 ):
     """조건검색 요청 일반 (ka10172)"""
     try:
@@ -156,7 +156,7 @@ async def request_condition_search(
 @router.post("/condition/realtime")
 async def request_realtime_condition(
     condition_search: ConditionalSearch,
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    kiwoom_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """조건검색 요청 실시간 (ka10173)"""
@@ -182,7 +182,7 @@ async def request_realtime_condition(
 @router.post("/condition/cancel")
 async def cancel_realtime_condition(
     seq: str = Query(..., description="조건검색식 일련번호"),
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client),
+    kiwoom_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """조건검색 실시간 해제 (ka10174)"""
