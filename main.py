@@ -6,7 +6,7 @@ from container.token_di import TokenContainer
 from api.routes import api_router
 from config import settings
 from core.kiwoom_client import KiwoomClient
-from dependencies import get_kiwoom_client, get_socket_client
+from dependencies import get_kiwoom_client, get_socket_client,get_realtime_handler
 from db.postgres import init_db, close_db
 from db.redis_client import init_redis, close_redis
 
@@ -20,10 +20,22 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 앱 시작 시 실행
-    kiwoom_client = get_kiwoom_client()
+    
+    # 1. 먼저 realtime_handler 인스턴스 가져오기
+    realtime_handler = get_realtime_handler()
+    logging.info(f"RealtimeHandler 인스턴스 생성됨")
+    
+    # 2. realtime_handler 초기화
+    await realtime_handler.initialize()
+    logging.info("Realtime handler initialized.")
+    
+    # 3. SocketClient 인스턴스 가져오기
     socket_client = get_socket_client()
-    await socket_client.initialize()
-    logging.info("Kiwoom client initialized.")
+    logging.info("SocketClient 인스턴스 생성됨")
+    
+    # 4. SocketClient에 realtime_handler 전달하며 초기화
+    await socket_client.initialize(realtime_handler=realtime_handler)
+    logging.info("Socket client initialized with realtime_handler.")
 
     # 데이터베이스 연결 초기화
     await init_db()

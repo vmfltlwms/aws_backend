@@ -11,21 +11,17 @@ from config import settings
 from dependency_injector.wiring import inject, Provide
 from container.token_di import TokenContainer
 from core.token_client import TokenGenerator
-from db.redis_client import store_realtime_market_data, get_redis_connection
+from db.redis_client import get_hash_data, get_redis_connection
 
 REAL_HOST = 'https://api.kiwoom.com'
 MOCK_HOST = 'https://mockapi.kiwoom.com'
 REAL_SOCKET = 'wss://api.kiwoom.com:10000/api/dostk/websocket'
 MOCK_SOCKET = 'wss://mockapi.kiwoom.com:10000/api/dostk/websocket'
 
-
 logger = logging.getLogger(__name__)
-
-
 
 class SocketClient() : 
     """키움 API와 통신하는 클라이언트"""
-
     def __init__(self, 
                 real=settings.KIWOOM_REAL_SERVER,
                 token_generator: TokenGenerator = Depends(Provide[TokenContainer.token_generator])):
@@ -40,13 +36,12 @@ class SocketClient() :
         self.keep_running = True
         self.logger = logging.getLogger(__name__)
         self.registered_groups = []
-        
         # 등록된 종목 추적
         self.registered_items = {}
         
         # 클라이언트 웹소켓 연결 관리
-        self.active_connections: List[WebSocket] = []
-        
+        self.websocket_clients = []  # 타입: List[WebSocket]
+
         # 이벤트 루프 및 태스크
         self.event_loop = None
         self.connection_task = None
@@ -57,29 +52,29 @@ class SocketClient() :
         
         # 응답 대기를 위한 Future 객체 딕셔너리
         self.response_futures = {}
-        self.callback = {
-            # "00": handle_order_execution,
-            # "04": handle_balance,
-            # "0A": handle_stock_base,
-            # "0B": handle_stock_execution,
-            # "0C": handle_stock_prefer_ask,
-            "0D": self.handle_stock_ask_bid,
-            # ... 나머지도 여기에 추가
-        }
+        
+        # 실시간 데이터 핸들러
+        self.realtime_handler = None
 
+# core/socket_client.py (initialize 메서드 수정)
 
     @inject
-    async def initialize(self, token_generator: TokenGenerator = Depends(Provide[TokenContainer.token_generator])):
+    async def initialize(self, 
+                        token_generator: TokenGenerator = Depends(Provide[TokenContainer.token_generator]),
+                        realtime_handler = None):
         """클라이언트 초기화 및 연결"""
         try:
-            self.token =  token_generator.get_token()
+            self.token = token_generator.get_token()
+            
+            # 실시간 데이터 핸들러 설정
+            self.realtime_handler = realtime_handler
+            
             await self.connect()
             return True
         except Exception as e:
             logger.error(f"초기화 실패: {str(e)}")
             return False
-   
-    # WebSocket 서버에 연결
+
     async def connect(self):
         """키움 WebSocket 서버에 연결"""
         try:
@@ -148,19 +143,61 @@ class SocketClient() :
                 return False
         return False
     
-    async def process_real_time_data(self, response: dict):
-        # for item in response.get("data", []):
-        #     type_code = item.get("type")
-        #     item_code = item.get("item")
-        #     values = item.get("values", {})
-            handler = self.callback.get('0D')
-            logger.info(f"실시간 데이터 수신: {response} 수신했지롱")
-            if handler:
-                handler('0D', response)
-            else:
-                print("지원되지 않는 타입: {0D}")
-
-    # 서버로부터 메시지 수신
+    async def send_and_wait_for_response(self, message, trnm, timeout=10.0):
+        """메시지를 보내고 특정 trnm에 대한 응답을 기다림"""
+        if not self.connected:
+            logger.warning("연결이 끊겨 있습니다. 재연결 시도 중...")
+            await self.connect()
+            
+        if not self.connected:
+            return {"error": "서버에 연결할 수 없습니다."}
+            
+        try:
+            # 현재 존재하는 Future 확인 로깅
+            logger.info(f"현재 등록된 response_futures 목록: {list(self.response_futures.keys())}")
+            
+            # Future 객체 생성
+            future = asyncio.Future()
+            
+            # 응답 추적을 위해 trnm을 키로 사용
+            logger.info(f"{trnm} 응답 대기를 위한 Future 객체 생성")
+            self.response_futures[trnm] = future
+            
+            # 메시지에 trnm 값이 있는지 확인
+            msg_trnm = message.get('trnm') if isinstance(message, dict) else None
+            logger.info(f"전송할 메시지 trnm: {msg_trnm}, 기다릴 응답 trnm: {trnm}")
+            
+            # 메시지 전송
+            logger.info(f"{trnm} 요청 메시지 전송: {message}")
+            result = await self.send_message(message)
+            if not result:
+                if trnm in self.response_futures:
+                    del self.response_futures[trnm]
+                logger.error(f"{trnm} 메시지 전송 실패")
+                return {"error": "메시지 전송 실패"}
+                
+            # 응답 대기
+            try:
+                logger.info(f"{trnm} 응답 대기 시작 (타임아웃: {timeout}초)")
+                response = await asyncio.wait_for(future, timeout)
+                logger.info(f"{trnm} 응답 수신 성공: {response}")
+                return response
+            except asyncio.TimeoutError:
+                logger.error(f"{trnm} 응답 대기 시간 초과")
+                return {"error": f"{trnm} 응답 대기 시간 초과"}
+            finally:
+                # Future 객체 삭제
+                if trnm in self.response_futures:
+                    logger.info(f"{trnm} Future 객체 삭제")
+                    del self.response_futures[trnm]
+                    
+        except Exception as e:
+            logger.error(f"메시지 전송 및 응답 대기 중 오류: {str(e)}")
+            if trnm in self.response_futures:
+                del self.response_futures[trnm]
+            return {"error": f"메시지 전송 및 응답 대기 중 오류: {str(e)}"}
+        
+    # receive_messages 메서드 수정
     async def receive_messages(self):
         """키움 서버로부터 메시지 수신"""
         while self.keep_running:
@@ -174,37 +211,48 @@ class SocketClient() :
                 raw_message = await self.websocket.recv()
                 response = json.loads(raw_message)
                 
+                # 로그 추가 (응답 확인용)
+                logger.debug(f"수신 메시지 전문: {response}")
+                
                 # trnm 값 추출
                 trnm = response.get('trnm', '')
-                                
-                # 메시지 유형에 따른 처리
+                
+                # PING 응답은 클라이언트에서 처리 (즉시 응답 필요)
+                if trnm == 'PING':
+                    # PING 응답 처리 (수신값 그대로 송신)
+                    logger.debug('PING 메시지 수신, PONG 응답')
+                    await self.send_message(response)
+                    continue
+                    
+                # Future 객체가 있는 응답 처리 (CNSRLST, CNSRREQ, CNSRCNC 등)
+                if trnm in self.response_futures:
+                    logger.info(f'{trnm} 응답 수신, Future 객체에 결과 설정: {response}')
+                    future = self.response_futures[trnm]
+                    if not future.done():
+                        future.set_result(response)
+                    continue
+                    
+                # 로그인 응답 처리
                 if trnm == 'LOGIN':
-                    # 로그인 응답 처리
                     if response.get('return_code') != 0:
                         logger.error(f'로그인 실패: {response.get("return_msg")}')
                         await self.disconnect()
                     else:
                         logger.info('로그인 성공')
-                
-                elif trnm == 'PING':
-                    # PING 응답 처리 (수신값 그대로 송신)
-                    logger.debug('PING 메시지 수신, PONG 응답')
-                    await self.send_message(response)
-
-                # PING이 아닌 모든 메시지 로깅
-                if trnm != 'PING':
-                    logger.info(f'실시간 시세 서버 응답 수신 : {response}')
-
-                # 실시간 등록 아닌 모든 메시지 로깅
-                if trnm == 'REG':
-                    logger.info('실시간 시세 서버 응답 수신 REG' )   
-                    await self.process_real_time_data(response)
- 
-
-                # 실시간 등록 해제 아닌 모든 메시지 로깅
-                if trnm == 'REMOVE':
-                    logger.info('실시간 시세 서버 응답 수신 REMOVE' )                                        
-
+                    continue
+                    
+                # 실시간 데이터 처리 (위 조건에 해당하지 않는 메시지)
+                if self.realtime_handler:
+                    # 실시간 데이터인 경우 바로 process_real_time_data로 전달
+                    if trnm == 'REAL':
+                        await self.realtime_handler.process_real_time_data(response)
+                    else:
+                        # 기타 메시지는 로그만 남김
+                        logger.info(f'기타 메시지 수신: {trnm} - {response}')
+                else:
+                    logger.error('realtime_handler가 없습니다')
+                    logger.info(f'실시간 시세 서버 응답 수신 (핸들러 없음): {trnm}')
+                            
             except websockets.ConnectionClosed:
                 logger.warning('키움 서버에서 연결이 종료되었습니다.')
                 self.connected = False
@@ -215,6 +263,7 @@ class SocketClient() :
             except Exception as e:
                 logger.error(f'메시지 수신 중 오류: {str(e)}')
                 await asyncio.sleep(1)  # 오류 발생 시 잠시 대기
+        
     
     # 재연결 시도
     async def try_reconnect(self, max_retries=5, retry_delay=5):
@@ -245,44 +294,6 @@ class SocketClient() :
             logger.error(f"재연결 실패: {str(e)}")
             
         return False
-    
-    # 클라이언트 웹소켓 관리
-    async def connect_client(self, websocket: WebSocket):
-        """프론트엔드 클라이언트 연결 추가"""
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"새 클라이언트 연결됨. 현재 {len(self.active_connections)}개 연결")
-    
-    def disconnect_client(self, websocket: WebSocket):
-        """프론트엔드 클라이언트 연결 해제"""
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-            logger.info(f"클라이언트 연결 종료. 현재 {len(self.active_connections)}개 연결")
-    
-    # 프론트엔드 클라이언트에게 메시지 전송
-    async def broadcast_to_clients(self, message):
-        """모든 연결된 클라이언트에게 메시지 전송"""
-        if not self.active_connections:
-            return
-        
-        # 딕셔너리를 JSON 문자열로 변환
-        if not isinstance(message, str):
-            message = json.dumps(message)
-        
-        disconnected = []
-        
-        # 연결된 모든 클라이언트에게 전송
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                logger.error(f"클라이언트에 메시지 전송 중 오류: {str(e)}")
-                # 연결에 문제가 있는 클라이언트는 목록에서 제거하기 위해 표시
-                disconnected.append(connection)
-        
-        # 연결 끊긴 클라이언트 정리
-        for connection in disconnected:
-            self.disconnect_client(connection)
     
     # 실시간 데이터 등록
     async def register_real_data(self, group_number, items, types, refresh=False):
@@ -368,7 +379,6 @@ class SocketClient() :
         
         logger.info(f"그룹 {group_no} 전체가 해제되었습니다.")
         return result
-
 
     async def get_condition_list(self):
         """조건검색 목록 조회 (ka10171)"""
@@ -660,7 +670,7 @@ class SocketClient() :
             # ...
                     # Redis에 데이터 저장
             redis_client = get_redis_connection()
-            store_realtime_market_data(redis_client, data)
+           # store_realtime_market_data(redis_client, data)
             
             # 클라이언트에 데이터 전송
             await self.broadcast_to_clients(data)
@@ -811,5 +821,4 @@ class SocketClient() :
                 pass
             raise
 
-    def handle_stock_ask_bid(self, item_code, values):
-        print(f"[주문체결] {item_code} => {values}") 
+

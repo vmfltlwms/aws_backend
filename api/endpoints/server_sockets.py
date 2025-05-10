@@ -1,41 +1,39 @@
 import logging
 import json
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query
-from core.kiwoom_client import KiwoomClient
-from core.websocket import ConnectionManager
+from core.socket_client import SocketClient
 from services.realtime_services import RealtimeStateManager
+from services.realtime_handler import RealtimeHandler
 
-from dependencies import get_kiwoom_client, get_connection_manager, get_realtime_state_manager
+from dependencies import get_socket_client, get_realtime_state_manager, get_realtime_handler
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.websocket("/test")
-async def test_websocket(websocket: WebSocket):
-    await websocket.accept()
-    while True:
-        try:
-            data = await websocket.receive_text()
-            await websocket.send_text(f"You sent: {data}")
-        except WebSocketDisconnect:
-            break
-
-@router.websocket("/ws/market")
+@router.websocket("/ws/realdata")
 async def market_websocket(
     websocket: WebSocket,
-    connection_manager: ConnectionManager = Depends(get_connection_manager), #core.websocket.ConnectionManager
-    kiwoom_client: KiwoomClient = Depends(get_kiwoom_client), # core.kiwoom_client.KiwoomClient
-    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager) # services.realtime_services.RealtimeStateManager
+    socket_client: SocketClient = Depends(get_socket_client),
+    state_manager: RealtimeStateManager = Depends(get_realtime_state_manager),
+    realtime_handler: RealtimeHandler = Depends(get_realtime_handler)
 ):
     """시장 데이터 웹소켓 연결"""
-    connection_info = await connection_manager.connect(websocket)
+    # 웹소켓 연결 수락 및 클라이언트 등록
+    await websocket.accept()
+    await realtime_handler.register_client(websocket)
+    
+    # 클라이언트 식별 및 그룹 정보 저장 (구독 추적용)
+    client_id = str(id(websocket))
+    client_groups = []
     
     try:
         while True:
             # 클라이언트로부터 메시지 수신
             data = await websocket.receive_text()
-            
+            print("="*20)
+            print(f"Received data: {data}")
+            print("="*20)
             try:
                 command = json.loads(data)
                 
@@ -48,11 +46,11 @@ async def market_websocket(
                     refresh = command.get("refresh", False)
                     
                     if group_no and items and types:
-                        result = await kiwoom_client.register_real_data(group_no, items, types, refresh)
+                        result = await socket_client.register_real_data(group_no, items, types, refresh)
                         # 등록이 성공하면 클라이언트를 해당 그룹에 추가
                         if result:
-                            if group_no not in connection_info["groups"]:
-                                connection_info["groups"].append(group_no)
+                            if group_no not in client_groups:
+                                client_groups.append(group_no)
                             
                             # 상태 관리자 업데이트
                             state_manager.add_subscription(group_no, items, types, refresh)
@@ -67,7 +65,7 @@ async def market_websocket(
                 elif command.get("action") == "condition_list":
                     # 조건검색 목록 요청
                     try:
-                        result = await kiwoom_client.get_condition_list()
+                        result = await socket_client.get_condition_list()
                         await websocket.send_json({"status": "success", "action": "condition_list", "data": result})
                     except Exception as e:
                         await websocket.send_json({"status": "error", "message": f"조건검색 목록 조회 실패: {str(e)}"})
@@ -81,7 +79,7 @@ async def market_websocket(
                     next_key = command.get("next_key", "")         # 기본값 "" (연속조회 키 없음)
                     
                     try:
-                        result = await kiwoom_client.request_condition_search(
+                        result = await socket_client.request_condition_search(
                             seq=seq,
                             search_type=search_type,
                             market_type=market_type,
@@ -100,11 +98,11 @@ async def market_websocket(
                     
                     if seq:
                         try:
-                            result = await kiwoom_client.request_realtime_condition(seq, search_type, market_type)
+                            result = await socket_client.request_realtime_condition(seq, search_type, market_type)
                             # 등록이 성공하면 실시간 조건검색 그룹에 추가
                             condition_group = f"cond_{seq}"
-                            if condition_group not in connection_info["groups"]:
-                                connection_info["groups"].append(condition_group)
+                            if condition_group not in client_groups:
+                                client_groups.append(condition_group)
                                 
                             # 상태 관리자 업데이트
                             state_manager.add_condition_subscription(seq)
@@ -121,11 +119,11 @@ async def market_websocket(
                     
                     if seq:
                         try:
-                            result = await kiwoom_client.cancel_realtime_condition(seq)
+                            result = await socket_client.cancel_realtime_condition(seq)
                             # 해당 조건검색 그룹에서 제거
                             condition_group = f"cond_{seq}"
-                            if condition_group in connection_info["groups"]:
-                                connection_info["groups"].remove(condition_group)
+                            if condition_group in client_groups:
+                                client_groups.remove(condition_group)
                                 
                             # 상태 관리자 업데이트
                             state_manager.remove_condition_subscription(seq)
@@ -150,7 +148,7 @@ async def market_websocket(
                         })
                     else:
                         try:
-                            result = await kiwoom_client.subscribe_realtime_price(
+                            result = await socket_client.subscribe_realtime_price(
                                 group_no=group_no,
                                 items=items,
                                 data_types=data_types,
@@ -164,8 +162,8 @@ async def market_websocket(
                                 })
                             else:
                                 # 구독 성공 시 그룹에 추가
-                                if group_no not in connection_info["groups"]:
-                                    connection_info["groups"].append(group_no)
+                                if group_no not in client_groups:
+                                    client_groups.append(group_no)
                                 
                                 # 상태 관리자 업데이트
                                 state_manager.add_subscription(group_no, items, data_types, refresh)
@@ -192,7 +190,7 @@ async def market_websocket(
                     data_types = command.get("data_types")
                     
                     try:
-                        result = await kiwoom_client.unsubscribe_realtime_price(
+                        result = await socket_client.unsubscribe_realtime_price(
                             group_no=group_no,
                             items=items,
                             data_types=data_types
@@ -205,8 +203,8 @@ async def market_websocket(
                             })
                         else:
                             # 구독 해제 성공 시 해당 그룹 연결 정보에서 제거 (그룹 전체 해제인 경우)
-                            if items is None and group_no in connection_info["groups"]:
-                                connection_info["groups"].remove(group_no)
+                            if items is None and group_no in client_groups:
+                                client_groups.remove(group_no)
                             
                             # 상태 관리자 업데이트
                             state_manager.remove_subscription(group_no, items, data_types)
@@ -237,8 +235,8 @@ async def market_websocket(
                                 "subscriptions": subscriptions,
                                 "condition_subscriptions": condition_subscriptions,
                                 "connection_info": {
-                                    "client_id": connection_info["client_id"],
-                                    "groups": connection_info["groups"]
+                                    "client_id": client_id,
+                                    "groups": client_groups
                                 }
                             }
                         })
@@ -263,11 +261,12 @@ async def market_websocket(
                 await websocket.send_json({"status": "error", "message": str(e)})
                 
     except WebSocketDisconnect:
-        connection_manager.disconnect(websocket)
-        logger.info(f"클라이언트 연결 종료: {connection_info['client_id']}")
+        # 연결 종료 시 클라이언트 등록 해제
+        await realtime_handler.unregister_client(websocket)
+        logger.info(f"클라이언트 연결 종료: {client_id}")
     except Exception as e:
         logger.error(f"웹소켓 통신 중 예외 발생: {str(e)}")
         try:
-            connection_manager.disconnect(websocket)
+            await realtime_handler.unregister_client(websocket)
         except:
             pass

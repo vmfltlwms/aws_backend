@@ -55,7 +55,7 @@ async def subscribe_realtime_price(
             description="실시간 구독 등록해제")
 async def unsubscribe_realtime_price(
     request: RealtimePriceUnsubscribeRequest,
-    kiwoom_client: SocketClient = Depends(get_socket_client),
+    socket_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """
@@ -65,10 +65,10 @@ async def unsubscribe_realtime_price(
     - **items**: 종목 코드 리스트 (예: ["005930", "000660"]). None이면 그룹 전체 해제
     - **data_types**: 데이터 타입 리스트 (예: ["0D"]). None이면 지정된 종목의 모든 타입 해제
     """
-    if not kiwoom_client.connected:
+    if not socket_client.connected:
         raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
     
-    result = await kiwoom_client.unsubscribe_realtime_price(
+    result = await socket_client.unsubscribe_realtime_price(
         group_no=request.group_no,
         items=request.items,
         data_types=request.data_types
@@ -91,7 +91,7 @@ async def unsubscribe_realtime_price(
 @router.delete("/price/group/{group_no}")
 async def unsubscribe_group(
     group_no: str,
-    kiwoom_client: SocketClient = Depends(get_socket_client),
+    socket_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """
@@ -99,10 +99,10 @@ async def unsubscribe_group(
     
     - **group_no**: 해제할 그룹 번호
     """
-    if not kiwoom_client.connected:
+    if not socket_client.connected:
         raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
     
-    result = await kiwoom_client.unsubscribe_realtime_price(group_no=group_no)
+    result = await socket_client.unsubscribe_realtime_price(group_no=group_no)
     
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -112,15 +112,14 @@ async def unsubscribe_group(
     
     return result
 
-
-@router.get("/condition/list")
-async def get_condition_list(kiwoom_client: SocketClient = Depends(get_socket_client)):
+@router.post("/condition/list")
+async def get_condition_list(socket_client: SocketClient = Depends(get_socket_client)):
     """조건검색 목록 조회 (ka10171)"""
     try:
-        if not kiwoom_client.connected:
+        if not socket_client.connected:
             raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
         
-        response = await kiwoom_client.get_condition_list()
+        response = await socket_client.get_condition_list()
         logger.debug(f"조건검색 목록: {json.dumps(response, indent=2)}")
         
         return response
@@ -132,14 +131,14 @@ async def get_condition_list(kiwoom_client: SocketClient = Depends(get_socket_cl
 @router.post("/condition/search")
 async def request_condition_search(
     condition_search: ConditionalSearchRequest,
-    kiwoom_client: SocketClient = Depends(get_socket_client)
+    socket_client: SocketClient = Depends(get_socket_client)
 ):
     """조건검색 요청 일반 (ka10172)"""
     try:
-        if not kiwoom_client.connected:
+        if not socket_client.connected:
             raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
         
-        result = await kiwoom_client.request_condition_search(
+        result = await socket_client.request_condition_search(
             seq=condition_search.seq,
             search_type=condition_search.search_type,
             market_type=condition_search.market_type,
@@ -156,15 +155,15 @@ async def request_condition_search(
 @router.post("/condition/realtime")
 async def request_realtime_condition(
     condition_search: ConditionalSearch,
-    kiwoom_client: SocketClient = Depends(get_socket_client),
+    socket_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """조건검색 요청 실시간 (ka10173)"""
     try:
-        if not kiwoom_client.connected:
+        if not socket_client.connected:
             raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
         
-        result = await kiwoom_client.request_realtime_condition(
+        result = await socket_client.request_realtime_condition(
             condition_search.seq,
             condition_search.search_type,
             condition_search.market_type
@@ -182,15 +181,15 @@ async def request_realtime_condition(
 @router.post("/condition/cancel")
 async def cancel_realtime_condition(
     seq: str = Query(..., description="조건검색식 일련번호"),
-    kiwoom_client: SocketClient = Depends(get_socket_client),
+    socket_client: SocketClient = Depends(get_socket_client),
     state_manager: RealtimeStateManager = Depends(get_realtime_state_manager)
 ):
     """조건검색 실시간 해제 (ka10174)"""
     try:
-        if not kiwoom_client.connected:
+        if not socket_client.connected:
             raise HTTPException(status_code=503, detail="키움 API에 연결되어 있지 않습니다.")
         
-        result = await kiwoom_client.cancel_realtime_condition(seq)
+        result = await socket_client.cancel_realtime_condition(seq)
         
         # 상태 관리자 업데이트
         state_manager.remove_condition_subscription(seq)
