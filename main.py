@@ -9,53 +9,63 @@ from core.kiwoom_client import KiwoomClient
 from dependencies import get_kiwoom_client, get_socket_client,get_realtime_handler
 from db.postgres import init_db, close_db
 from db.redis_client import init_redis, close_redis
+from db.redis_to_postgres import RedisToPostgresWorker
 
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+# 워커 인스턴스 (전역 변수)
+redis_to_postgres_worker = None
 
 # 라이프사이클 핸들러 정의
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 앱 시작 시 실행
+    global redis_to_postgres_worker
     
-    # 1. 먼저 realtime_handler 인스턴스 가져오기
-    realtime_handler = get_realtime_handler()
-    logging.info(f"RealtimeHandler 인스턴스 생성됨")
-    
-    # 2. realtime_handler 초기화
-    await realtime_handler.initialize()
-    logging.info("Realtime handler initialized.")
-    
-    # 3. SocketClient 인스턴스 가져오기
-    socket_client = get_socket_client()
-    logging.info("SocketClient 인스턴스 생성됨")
-    
-    # 4. SocketClient에 realtime_handler 전달하며 초기화
-    await socket_client.initialize(realtime_handler=realtime_handler)
-    logging.info("Socket client initialized with realtime_handler.")
-
-    # 데이터베이스 연결 초기화
+    # 1. 먼저 데이터베이스들을 초기화
     await init_db()
     logging.info("PostgreSQL connection initialized.")
     
-    # Redis 연결 초기화
+    # 2. Redis를 먼저 초기화
     await init_redis()
     logging.info("Redis connection initialized.")
     
+    # 3. Redis가 초기화된 후에 realtime_handler 초기화
+    realtime_handler = get_realtime_handler()
+    logging.info(f"RealtimeHandler 인스턴스 생성됨")
+    
+    await realtime_handler.initialize()
+    logging.info("Realtime handler initialized.")
+    
+    # 4. SocketClient 인스턴스 가져오기
+    socket_client = get_socket_client()
+    logging.info("SocketClient 인스턴스 생성됨")
+    
+    # 5. SocketClient에 realtime_handler 전달하며 초기화
+    await socket_client.initialize(realtime_handler=realtime_handler)
+    logging.info("Socket client initialized with realtime_handler.")
+    
+    # 6. 워커 초기화 및 시작
+    redis_to_postgres_worker = RedisToPostgresWorker(interval_seconds=10)
+    await redis_to_postgres_worker.start()
+    logging.info("Redis to PostgreSQL worker started")
+    
     yield
     
-    # 앱 종료 시 실행
+    # 앱 종료 시 실행 (역순으로 정리)
+    if redis_to_postgres_worker:
+        await redis_to_postgres_worker.stop()
+        logging.info("Redis to PostgreSQL worker stopped")
+    
     await socket_client.disconnect()
     logging.info("socket client disconnected.")
     
-    # 데이터베이스 연결 종료
     await close_db()
     logging.info("PostgreSQL connection closed.")
     
-    # Redis 연결 종료
     await close_redis()
     logging.info("Redis connection closed.")
 

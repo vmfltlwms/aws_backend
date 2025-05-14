@@ -104,3 +104,5 @@ class RealtimeStateManager:
     def get_condition_subscriptions(self) -> List[str]:
         """구독 중인 조건검색 목록 조회"""
         return list(self.condition_subscriptions)
+    
+    

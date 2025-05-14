@@ -14,6 +14,15 @@ class Settings(BaseSettings):
     KIWOOM_SECRET_KEY: str = os.getenv("KIWOOM_SECRET_KEY", "")
     KIWOOM_REAL_SERVER: bool = os.getenv("KIWOOM_REAL_SERVER", "false").lower() == "true"
     
+    # 환경별 설정 (타입 어노테이션 추가)
+    WEBSOCKET_TIMEOUT: int = int(os.getenv("WEBSOCKET_TIMEOUT", "30"))
+    RECONNECT_MAX_RETRIES: int = int(os.getenv("RECONNECT_MAX_RETRIES", "5"))
+    RECONNECT_DELAY: int = int(os.getenv("RECONNECT_DELAY", "5"))
+    KEEP_ALIVE_INTERVAL: int = int(os.getenv("KEEP_ALIVE_INTERVAL", "60"))
+    
+    # 로깅 레벨 (타입 어노테이션 추가)
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    
     # 웹소켓 설정
     WS_HEARTBEAT_INTERVAL: int = 30  # 초
     
@@ -33,9 +42,7 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str = ""
     REDIS_DB: int = 0
 
-    
     class Config:
         env_file = ".env"
 
 settings = Settings()
-

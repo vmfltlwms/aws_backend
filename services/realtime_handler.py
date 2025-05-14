@@ -109,7 +109,7 @@ class RealtimeHandler:
     async def handle_stock_ask_bid(self, item_code: str, values: Dict[str, Any]):
         """주식호가잔량 (0D) 처리"""
         res = await get_hash_data(self.redis_client, "0D", item_code)
-        logger.info(f"주식호가잔량 데이터 수신: {res}")
+        # logger.info(f"주식호가잔량 데이터 수신: {res}")
         # 호가 데이터 처리 로직 구현
         
     async def handle_stock_execution(self, item_code: str, values: Dict[str, Any]):
