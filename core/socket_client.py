@@ -64,17 +64,21 @@ class SocketClient():
         # 응답 대기
         self.response_futures = {}
         
-
+        self.keep_alive_task = None  # 추가
         
         # 핸들러
         self.realtime_handler = None
 
         # 구독 정보 저장용
         self.saved_subscriptions = {
-            "groups": {},
-            "conditions": []
-    }
-
+                                    "groups": {},
+                                    "conditions": []     
+                                    }
+        # Keep-Alive 설정 추가
+        self.keep_alive_interval = 30  # 30초마다 Keep-Alive
+        self.last_keep_alive = 0
+        
+        
     @inject
     async def initialize(self, 
                         token_generator: TokenGenerator = Depends(Provide[TokenContainer.token_generator]),
@@ -132,7 +136,12 @@ class SocketClient():
                 if not self.receive_task or self.receive_task.done():
                     self.receive_task = asyncio.create_task(self._receive_messages_wrapper())
                     logger.info("새로운 수신 태스크 시작")
-                
+                    
+                # 5.5. Keep-Alive 태스크 시작 (추가)
+                if not self.keep_alive_task or self.keep_alive_task.done():
+                    self.keep_alive_task = asyncio.create_task(self.start_keep_alive())
+                    logger.info("Keep-Alive 태스크 시작")
+                    
                 # 6. 이전 구독 정보 복원
                 if hasattr(self, 'saved_subscriptions') and self.saved_subscriptions:
                     # 로그인 완료 후 잠시 대기
@@ -161,6 +170,18 @@ class SocketClient():
             except Exception as e:
                 logger.error(f"수신 태스크 정리 중 오류: {e}")
             self.receive_task = None
+        # 1.5. Keep-Alive 태스크 정리 (추가)
+        if self.keep_alive_task and not self.keep_alive_task.done():
+            logger.info("기존 Keep-Alive 태스크 정리 중...")
+            self.keep_alive_task.cancel()
+            try:
+                await asyncio.wait_for(self.keep_alive_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                logger.info("Keep-Alive 태스크 정리 완료")
+            except Exception as e:
+                logger.error(f"Keep-Alive 태스크 정리 중 오류: {e}")
+            self.keep_alive_task = None
+                
         
         # 2. WebSocket 연결 정리
         if self.websocket:
@@ -175,32 +196,41 @@ class SocketClient():
         self.connected = False
         
     async def start_keep_alive(self):
-        """Keep-Alive 메시지 주기적 전송"""
-        while self.keep_running and self.connected:
-            try:
-                if self.websocket and not self.websocket.closed:
-                    # Ping 메시지 전송
-                    pong_waiter = await self.websocket.ping()
+            """Keep-Alive 메시지 주기적 전송"""
+            logger.info("Keep-Alive 태스크 시작됨")
+            
+            while self.keep_running and self.connected:
+                try:
+                    if self.websocket:
+                        # PING 메시지 전송
+                        ping_message = {
+                            'trnm': 'PING',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        
+                        # 직접 send_message를 시도하고 예외 처리
+                        success = await self.send_message(ping_message)
+                        if success:
+                            logger.debug(f"Keep-Alive PING 전송")
+                            self.last_keep_alive = time.time()
+                        else:
+                            logger.warning("Keep-Alive PING 전송 실패")
+                    else:
+                        logger.warning("WebSocket 인스턴스가 없습니다.")
                     
-                    # Pong 응답 대기 (타임아웃 5초)
-                    try:
-                        await asyncio.wait_for(pong_waiter, timeout=5.0)
-                        logger.debug("Ping-Pong 성공")
-                    except asyncio.TimeoutError:
-                        logger.warning("Pong 응답 없음 - 연결 상태 확인 필요")
-                        self.connected = False
-                        break
-                
-                # 설정된 간격으로 대기 (기본 30초)
-                await asyncio.sleep(self.keep_alive_interval)
-                
-            except Exception as e:
-                logger.error(f"Keep-alive 중 오류: {e}")
-                self.connected = False
-                break
-        
-        logger.info("Keep-alive 종료")
-    
+                    # 설정된 간격으로 대기
+                    await asyncio.sleep(self.keep_alive_interval)
+                    
+                except asyncio.CancelledError:
+                    logger.info("Keep-Alive 태스크 취소됨")
+                    break
+                except Exception as e:
+                    logger.error(f"Keep-alive 중 오류: {e}")
+                    # 연결 문제로 판단
+                    self.connected = False
+                    break
+            
+            logger.info("Keep-alive 종료")
     
     async def _receive_messages_wrapper(self):
         """수신 태스크 래퍼 (단일 인스턴스 보장)"""
@@ -236,7 +266,7 @@ class SocketClient():
                     try:
                         raw_message = await asyncio.wait_for(
                             self.websocket.recv(), 
-                            timeout=30.0
+                            timeout=60.0
                         )
                     except asyncio.TimeoutError:
                         # 타임아웃 시 연결 확인
@@ -311,7 +341,12 @@ class SocketClient():
             # PING 응답
             if trnm == 'PING':
                 logger.debug('PING 메시지 수신, PONG 응답')
-                await self.send_message(response)
+                # PONG 응답 전송
+                pong_message = {
+                    'trnm': 'PONG',
+                    'timestamp': datetime.now().isoformat()
+                }
+                await self.send_message(pong_message)
                 return
                 
             # Future 응답
@@ -443,9 +478,17 @@ class SocketClient():
         """연결 상태 모니터링"""
         while self.keep_running:
             try:
-                await asyncio.sleep(60)  # 1분마다 체크
+                await asyncio.sleep(30)  # 30초마다 체크 (60에서 30으로 변경)
                 
                 if self.connected and self.websocket:
+                    # 마지막 Keep-Alive 시간 확인
+                    if hasattr(self, 'last_keep_alive'):
+                        time_since_last_keep_alive = time.time() - self.last_keep_alive
+                        if time_since_last_keep_alive > 90:  # 90초 이상 Keep-Alive 없으면
+                            logger.warning(f"Keep-Alive가 {time_since_last_keep_alive:.0f}초 동안 없음")
+                            self.connected = False
+                    
+                    # 추가 연결 상태 확인
                     if not await self._check_connection():
                         logger.warning("연결 상태 이상 감지")
                         self.connected = False
